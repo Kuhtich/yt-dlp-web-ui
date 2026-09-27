@@ -83,4 +83,18 @@ keys:
   clearCompletedButton: 'Clear completed'
   twitchIntegrationInfo: |
     To enable monitoring Twitch streams follow this wiki page.
-    https://github.com/marcopiovanello/yt-dlp-web-ui/wiki/Twitch-integration
+    https://github.com/marcopiovanello/yt-dlp-web-ui/wiki/Twitch-integration  viewList: 'List view'
+  viewTable: 'Table view'
+  viewIcons: 'Icon view'
+  columnName: 'Name'
+  columnSize: 'Size'
+  columnModified: 'Modified'
+  columnType: 'Type'
+  columnActions: 'Actions'
+  typeVideo: 'Video'
+  typeImage: 'Image'
+  typeAudio: 'Audio'
+  typeFolder: 'Folder'
+  typeFile: 'File'
+  download: 'Download'
+  delete: 'Delete'
