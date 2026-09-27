@@ -12,6 +12,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
 	"github.com/marcopiovanello/yt-dlp-web-ui/v4/server/config"
+	"github.com/marcopiovanello/yt-dlp-web-ui/v4/server/session"
 	"golang.org/x/oauth2"
 )
 
@@ -53,7 +54,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce)), http.StatusFound)
 }
 
-func doAuthentification(r *http.Request, setCookieCallback func(t *oauth2.Token)) (*OAuth2SuccessResponse, error) {
+func doAuthentification(r *http.Request) (*OAuth2SuccessResponse, error) {
 	state, err := r.Cookie("state")
 	if err != nil {
 		return nil, err
@@ -102,8 +103,6 @@ func doAuthentification(r *http.Request, setCookieCallback func(t *oauth2.Token)
 		return nil, errors.New("auth nonce does not match")
 	}
 
-	setCookieCallback(oauth2Token)
-
 	// redact
 	oauth2Token.AccessToken = "*REDACTED*"
 
@@ -120,22 +119,34 @@ func doAuthentification(r *http.Request, setCookieCallback func(t *oauth2.Token)
 }
 
 func SingIn(w http.ResponseWriter, r *http.Request) {
-	_, err := doAuthentification(r, func(t *oauth2.Token) {
-		idToken, _ := t.Extra("id_token").(string)
-
-		http.SetCookie(w, &http.Cookie{
-			Name:     "oid-token",
-			Value:    idToken,
-			HttpOnly: true,
-			Path:     "/",
-			Secure:   r.TLS != nil,
-			// MaxAge:   int(time.Hour * 24 * 30), XXX: overflows on 32 bit architectures.
-		})
-	})
+	res, err := doAuthentification(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// The ID token is not used as the session: the provider issues it with a
+	// short lifetime (about one hour for Google) and it cannot be renewed.
+	// Issue an application session instead, the same token the password login
+	// hands out.
+	var claims struct {
+		Email string `json:"email"`
+	}
+
+	if res.IDTokenClaims != nil {
+		if err := json.Unmarshal(*res.IDTokenClaims, &claims); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	token, err := session.Create(claims.Email)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	session.SetCookie(w, r, token)
 
 	w.Write([]byte("Login succesfully, you may now close this window and refresh yt-dlp-webui."))
 }
@@ -169,6 +180,8 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func Logout(w http.ResponseWriter, r *http.Request) {
+	session.ClearCookie(w, r)
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "oid-token",
 		HttpOnly: true,
