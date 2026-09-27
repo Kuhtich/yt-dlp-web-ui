@@ -3,14 +3,12 @@ package user
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/marcopiovanello/yt-dlp-web-ui/v3/server/config"
+	"github.com/marcopiovanello/yt-dlp-web-ui/v3/server/session"
 )
 
-const TOKEN_COOKIE_NAME = "jwt-yt-dlp-webui"
+const TOKEN_COOKIE_NAME = session.CookieName
 
 type LoginRequest struct {
 	Username string `json:"username"`
@@ -35,14 +33,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expiresAt := time.Now().Add(time.Hour * 24 * 30)
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"expiresAt": expiresAt,
-		"username":  req.Username,
-	})
-
-	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	tokenString, err := session.Create(req.Username)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -55,14 +46,5 @@ func Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func Logout(w http.ResponseWriter, r *http.Request) {
-	cookie := &http.Cookie{
-		Name:     TOKEN_COOKIE_NAME,
-		HttpOnly: true,
-		Secure:   false,
-		Expires:  time.Now(),
-		Value:    "",
-		Path:     "/",
-	}
-
-	http.SetCookie(w, cookie)
+	session.ClearCookie(w, r)
 }
