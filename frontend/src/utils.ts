@@ -1,5 +1,4 @@
 import { blue, red } from '@mui/material/colors'
-import { pipe } from 'fp-ts/lib/function'
 import { Accent, ThemeNarrowed } from './atoms/settings'
 import type { RPCResponse } from "./types"
 import { ProcessStatus } from './types'
@@ -76,12 +75,22 @@ export function mapProcessStatus(status: ProcessStatus) {
 export const prefersDarkMode = () =>
   window.matchMedia('(prefers-color-scheme: dark)').matches
 
-export const base64URLEncode = (s: string) => pipe(
-  s,
-  s => String.fromCodePoint(...new TextEncoder().encode(s)),
-  btoa,
-  encodeURIComponent
-)
+// Previews and file links carry the file path base64url encoded without
+// padding, so that the id stays a single URL path segment (standard base64
+// contains '/' and '+' which break the route and the query string).
+export const base64URLEncode = (s: string) => {
+  const bytes = new TextEncoder().encode(s)
+
+  let binary = ''
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte)
+  })
+
+  return btoa(binary)
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replaceAll('=', '')
+}
 
 export const getAccentValue = (accent: Accent, mode: ThemeNarrowed) => {
   switch (accent) {

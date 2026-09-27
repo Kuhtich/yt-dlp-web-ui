@@ -94,6 +94,8 @@ export type DirectoryEntry = {
   size: number
   modTime: string
   isVideo: boolean
+  isImage: boolean
+  isAudio: boolean
   isDirectory: boolean
 }
 
