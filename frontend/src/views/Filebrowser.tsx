@@ -1,6 +1,11 @@
 import {
   Backdrop,
+  Box,
   Button,
+  Card,
+  CardActionArea,
+  CardActions,
+  CardContent,
   Checkbox,
   CircularProgress,
   Container,
@@ -9,6 +14,7 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  IconButton,
   List,
   ListItem,
   ListItemButton,
@@ -20,15 +26,32 @@ import {
   SpeedDial,
   SpeedDialAction,
   SpeedDialIcon,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TableSortLabel,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
   Typography
 } from '@mui/material'
 
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever'
-import FolderIcon from '@mui/icons-material/Folder'
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile'
-import VideoFileIcon from '@mui/icons-material/VideoFile'
-
 import DownloadIcon from '@mui/icons-material/Download'
+import FolderIcon from '@mui/icons-material/Folder'
+import GridViewIcon from '@mui/icons-material/GridView'
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile'
+import MusicNoteIcon from '@mui/icons-material/MusicNote'
+import SaveAltIcon from '@mui/icons-material/SaveAlt'
+import TableRowsIcon from '@mui/icons-material/TableRows'
+import VideoFileIcon from '@mui/icons-material/VideoFile'
+import ViewListIcon from '@mui/icons-material/ViewList'
+
 import { matchW } from 'fp-ts/lib/TaskEither'
 import { pipe } from 'fp-ts/lib/function'
 import { useEffect, useMemo, useState, useTransition } from 'react'
@@ -43,10 +66,33 @@ import { DirectoryEntry } from '../types'
 import { base64URLEncode, formatSize } from '../utils'
 import { useAtomValue } from 'jotai'
 
+type Entry = DirectoryEntry & { selected: boolean }
+
+type ViewMode = 'list' | 'table' | 'icons'
+
+type ViewProps = {
+  files: Entry[]
+  t: (key: string) => string
+  thumbURL: (path: string) => string
+  onOpen: (path: string) => void
+  onFolder: (path: string) => void
+  onDownload: (path: string) => void
+  onDelete: (entry: DirectoryEntry) => void
+  onSelect: (name: string) => void
+  onContextMenu: (e: React.MouseEvent, entry: DirectoryEntry) => void
+}
+
+const VIEW_KEY = 'filebrowserView'
+
 export default function Downloaded() {
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 })
   const [showMenu, setShowMenu] = useState(false)
   const [currentFile, setCurrentFile] = useState<DirectoryEntry>()
+
+  const [view, setView] = useState<ViewMode>(() => {
+    const stored = localStorage.getItem(VIEW_KEY)
+    return stored === 'table' || stored === 'icons' ? stored : 'list'
+  })
 
   const serverAddr = useAtomValue(serverURL)
   const navigate = useNavigate()
@@ -110,6 +156,8 @@ export default function Downloaded() {
           ? [{
             isDirectory: true,
             isVideo: false,
+            isImage: false,
+            isAudio: false,
             modTime: '',
             name: '..',
             path: upperLevel,
@@ -178,6 +226,26 @@ export default function Downloaded() {
     fetcherSubfolder(path)
   })
 
+  const thumbURL = (path: string) =>
+    `${serverAddr}/filebrowser/thumb/${base64URLEncode(path)}?token=${localStorage.getItem('token') ?? ''}`
+
+  const viewProps: ViewProps = {
+    files: selectable,
+    t: i18n.t.bind(i18n),
+    thumbURL,
+    onOpen: (path) => onFileClick(path),
+    onFolder: (path) => onFolderClick(path),
+    onDownload: (path) => downloadFile(path),
+    onDelete: (entry) => deleteFile(entry),
+    onSelect: (name) => addSelected(name),
+    onContextMenu: (e, entry) => {
+      e.preventDefault()
+      setCurrentFile(entry)
+      setMenuPos({ x: e.clientX, y: e.clientY })
+      setShowMenu(true)
+    }
+  }
+
   return (
     <Container
       maxWidth="xl"
@@ -215,58 +283,41 @@ export default function Downloaded() {
         }}
         onClick={() => setShowMenu(false)}
       >
-        <List sx={{ width: '100%', bgcolor: 'background.paper' }}>
-          {selectable.length === 0 && i18n.t('noFilesFound')}
-          {selectable.map((file, idx) => (
-            <ListItem
-              onContextMenu={(e) => {
-                e.preventDefault()
-                setCurrentFile(file)
-                setMenuPos({ x: e.clientX, y: e.clientY })
-                setShowMenu(true)
-              }}
-              key={idx}
-              secondaryAction={
-                <div>
-                  {!file.isDirectory && <Typography
-                    variant="caption"
-                    component="span"
-                  >
-                    {formatSize(file.size)}
-                  </Typography>
-                  }
-                  {!file.isDirectory && <>
-                    <Checkbox
-                      edge="end"
-                      checked={file.selected}
-                      onChange={() => addSelected(file.name)}
-                    />
-                  </>}
-                </div>
+        <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1 }}>
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={view}
+            onChange={(_, next: ViewMode | null) => {
+              if (next) {
+                setView(next)
+                localStorage.setItem(VIEW_KEY, next)
               }
-              disablePadding
-            >
-              <ListItemButton onClick={
-                () => file.isDirectory
-                  ? onFolderClick(file.path)
-                  : onFileClick(file.path)
-              }>
-                <ListItemIcon>
-                  {file.isDirectory
-                    ? <FolderIcon />
-                    : file.isVideo
-                      ? <VideoFileIcon />
-                      : <InsertDriveFileIcon />
-                  }
-                </ListItemIcon>
-                <ListItemText
-                  primary={file.name}
-                  secondary={file.name != '..' && new Date(file.modTime).toLocaleString()}
-                />
-              </ListItemButton>
-            </ListItem>
-          ))}
-        </List>
+            }}
+          >
+            <ToggleButton value="list" aria-label={i18n.t('viewList')}>
+              <Tooltip title={i18n.t('viewList')}>
+                <ViewListIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value="table" aria-label={i18n.t('viewTable')}>
+              <Tooltip title={i18n.t('viewTable')}>
+                <TableRowsIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value="icons" aria-label={i18n.t('viewIcons')}>
+              <Tooltip title={i18n.t('viewIcons')}>
+                <GridViewIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Stack>
+        {selectable.length === 0 && (
+          <Typography sx={{ p: 2 }}>{i18n.t('noFilesFound')}</Typography>
+        )}
+        {view === 'list' && <FilesList {...viewProps} />}
+        {view === 'table' && <FilesTable {...viewProps} />}
+        {view === 'icons' && <FilesIcons {...viewProps} />}
       </Paper>
       <SpeedDial
         ariaLabel='archive actions'
@@ -319,6 +370,344 @@ export default function Downloaded() {
     </Container>
   )
 }
+
+const entryIcon = (file: DirectoryEntry, size = 24) => {
+  if (file.isDirectory) {
+    return file.name === '..'
+      ? <ArrowUpwardIcon sx={{ fontSize: size }} color="disabled" />
+      : <FolderIcon sx={{ fontSize: size }} color="primary" />
+  }
+  if (file.isVideo) {
+    return <VideoFileIcon sx={{ fontSize: size }} />
+  }
+  if (file.isAudio) {
+    return <MusicNoteIcon sx={{ fontSize: size }} />
+  }
+  return <InsertDriveFileIcon sx={{ fontSize: size }} />
+}
+
+const typeLabel = (file: DirectoryEntry, t: (key: string) => string) => {
+  if (file.isDirectory) {
+    return t('typeFolder')
+  }
+  if (file.isVideo) {
+    return t('typeVideo')
+  }
+  if (file.isAudio) {
+    return t('typeAudio')
+  }
+  if (file.isImage) {
+    return t('typeImage')
+  }
+  return t('typeFile')
+}
+
+/** Renders the preview of a single tile: a frame from the video, the image
+ * itself, or an icon when no preview can be produced. */
+const Preview: React.FC<{ file: DirectoryEntry, thumbURL: (path: string) => string }> = ({ file, thumbURL }) => {
+  const [failed, setFailed] = useState(false)
+
+  if (file.name === '..' || file.isDirectory) {
+    return (
+      <Stack alignItems="center" justifyContent="center" sx={{ height: '100%' }}>
+        {entryIcon(file, 56)}
+      </Stack>
+    )
+  }
+
+  if (file.isAudio) {
+    return (
+      <Stack alignItems="center" justifyContent="center" sx={{ height: '100%' }}>
+        <MusicNoteIcon sx={{ fontSize: 56 }} />
+      </Stack>
+    )
+  }
+
+  if (failed) {
+    return (
+      <Stack alignItems="center" justifyContent="center" sx={{ height: '100%' }}>
+        {entryIcon(file, 56)}
+      </Stack>
+    )
+  }
+
+  return (
+    <Box
+      component="img"
+      src={thumbURL(file.path)}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      sx={{
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
+        display: 'block',
+      }}
+    />
+  )
+}
+
+const FilesList: React.FC<ViewProps> = ({ files, t, thumbURL, onOpen, onFolder, onDownload, onDelete, onSelect, onContextMenu }) => (
+  <List sx={{ width: '100%', bgcolor: 'background.paper' }}>
+    {files.map((file, idx) => (
+      <ListItem
+        onContextMenu={(e) => onContextMenu(e, file)}
+        key={idx}
+        secondaryAction={
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            {!file.isDirectory && (
+              <Typography variant="caption" component="span">
+                {formatSize(file.size)}
+              </Typography>
+            )}
+            {!file.isDirectory && (
+              <>
+                <Tooltip title={t('download')}>
+                  <IconButton size="small" onClick={() => onDownload(file.path)}>
+                    <SaveAltIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Checkbox
+                  edge="end"
+                  checked={file.selected}
+                  onChange={() => onSelect(file.name)}
+                />
+              </>
+            )}
+          </Stack>
+        }
+        disablePadding
+      >
+        <ListItemButton onClick={() => file.isDirectory ? onFolder(file.path) : onOpen(file.path)}>
+          <ListItemIcon sx={{ minWidth: 64 }}>
+            <Box sx={{
+              width: 40,
+              height: 40,
+              borderRadius: 1,
+              overflow: 'hidden',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              bgcolor: 'action.hover',
+            }}>
+              {file.isVideo || file.isImage
+                ? <Preview file={file} thumbURL={thumbURL} />
+                : entryIcon(file)}
+            </Box>
+          </ListItemIcon>
+          <ListItemText
+            primary={file.name}
+            secondary={file.name !== '..' && new Date(file.modTime).toLocaleString()}
+          />
+        </ListItemButton>
+      </ListItem>
+    ))}
+  </List>
+)
+
+type SortKey = 'name' | 'size' | 'modTime'
+
+const FilesTable: React.FC<ViewProps> = ({ files, t, thumbURL, onOpen, onFolder, onDownload, onDelete, onSelect, onContextMenu }) => {
+  const [orderBy, setOrderBy] = useState<SortKey>('modTime')
+  const [desc, setDesc] = useState(true)
+
+  const sorted = useMemo(() => {
+    const cmp = (a: Entry, b: Entry) => {
+      switch (orderBy) {
+        case 'name':
+          return a.name.localeCompare(b.name)
+        case 'size':
+          return a.size - b.size
+        default:
+          return new Date(a.modTime).getTime() - new Date(b.modTime).getTime()
+      }
+    }
+
+    const head = files.filter(f => f.name === '..')
+    const rest = files.filter(f => f.name !== '..')
+
+    rest.sort((a, b) => desc ? -cmp(a, b) : cmp(a, b))
+
+    return [...head, ...rest]
+  }, [files, orderBy, desc])
+
+  const sortBy = (key: SortKey) => {
+    if (key === orderBy) {
+      setDesc(!desc)
+      return
+    }
+    setOrderBy(key)
+    setDesc(key !== 'name')
+  }
+
+  return (
+    <TableContainer>
+      <Table size="small" sx={{ minWidth: 640 }}>
+        <TableHead>
+          <TableRow>
+            <TableCell padding="checkbox" />
+            <TableCell sortDirection={orderBy === 'name' ? (desc ? 'desc' : 'asc') : false}>
+              <TableSortLabel
+                active={orderBy === 'name'}
+                direction={orderBy === 'name' && desc ? 'desc' : 'asc'}
+                onClick={() => sortBy('name')}
+              >
+                {t('columnName')}
+              </TableSortLabel>
+            </TableCell>
+            <TableCell align="right" sortDirection={orderBy === 'size' ? (desc ? 'desc' : 'asc') : false}>
+              <TableSortLabel
+                active={orderBy === 'size'}
+                direction={orderBy === 'size' && desc ? 'desc' : 'asc'}
+                onClick={() => sortBy('size')}
+              >
+                {t('columnSize')}
+              </TableSortLabel>
+            </TableCell>
+            <TableCell sortDirection={orderBy === 'modTime' ? (desc ? 'desc' : 'asc') : false}>
+              <TableSortLabel
+                active={orderBy === 'modTime'}
+                direction={orderBy === 'modTime' && desc ? 'desc' : 'asc'}
+                onClick={() => sortBy('modTime')}
+              >
+                {t('columnModified')}
+              </TableSortLabel>
+            </TableCell>
+            <TableCell>{t('columnType')}</TableCell>
+            <TableCell align="right">{t('columnActions')}</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {sorted.map((file) => (
+            <TableRow
+              key={file.path + file.name}
+              hover
+              onContextMenu={(e) => onContextMenu(e, file)}
+            >
+              <TableCell padding="checkbox">
+                {!file.isDirectory && (
+                  <Checkbox
+                    size="small"
+                    checked={file.selected}
+                    onChange={() => onSelect(file.name)}
+                  />
+                )}
+              </TableCell>
+              <TableCell sx={{ cursor: 'pointer', maxWidth: 520 }} onClick={() => file.isDirectory ? onFolder(file.path) : onOpen(file.path)}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box sx={{
+                    width: 36,
+                    height: 36,
+                    flex: '0 0 auto',
+                    borderRadius: 1,
+                    overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    bgcolor: 'action.hover',
+                  }}>
+                    {file.isVideo || file.isImage
+                      ? <Preview file={file} thumbURL={thumbURL} />
+                      : entryIcon(file)}
+                  </Box>
+                  <Typography variant="body2" noWrap title={file.name}>
+                    {file.name}
+                  </Typography>
+                </Stack>
+              </TableCell>
+              <TableCell align="right" title={file.isDirectory ? '' : `${file.size} B`}>
+                {file.isDirectory ? '—' : formatSize(file.size)}
+              </TableCell>
+              <TableCell>
+                {file.name !== '..' && new Date(file.modTime).toLocaleString()}
+              </TableCell>
+              <TableCell>{typeLabel(file, t)}</TableCell>
+              <TableCell align="right">
+                <Tooltip title={t('download')}>
+                  <IconButton size="small" onClick={() => onDownload(file.path)}>
+                    <SaveAltIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title={t('delete')}>
+                  <IconButton size="small" onClick={() => onDelete(file)}>
+                    <DeleteForeverIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  )
+}
+
+const FilesIcons: React.FC<ViewProps> = ({ files, t, thumbURL, onOpen, onFolder, onDownload, onDelete, onSelect, onContextMenu }) => (
+  <Box
+    sx={{
+      display: 'grid',
+      gap: 2,
+      gridTemplateColumns: {
+        xs: 'repeat(2, minmax(0, 1fr))',
+        sm: 'repeat(3, minmax(0, 1fr))',
+        md: 'repeat(4, minmax(0, 1fr))',
+        lg: 'repeat(6, minmax(0, 1fr))',
+      },
+    }}
+  >
+    {files.map((file) => (
+      <Card
+        key={file.path + file.name}
+        onContextMenu={(e) => onContextMenu(e, file)}
+        sx={{ display: 'flex', flexDirection: 'column' }}
+      >
+        <CardActionArea onClick={() => file.isDirectory ? onFolder(file.path) : onOpen(file.path)}>
+          <Box sx={{
+            position: 'relative',
+            width: '100%',
+            pt: '56.25%',
+            bgcolor: 'action.hover',
+            overflow: 'hidden',
+          }}>
+            <Box sx={{ position: 'absolute', inset: 0 }}>
+              <Preview file={file} thumbURL={thumbURL} />
+            </Box>
+          </Box>
+          <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+            <Typography variant="body2" noWrap title={file.name}>
+              {file.name}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" title={`${file.size} B`}>
+              {file.isDirectory ? t('typeFolder') : formatSize(file.size)}
+            </Typography>
+            {file.name !== '..' && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                {new Date(file.modTime).toLocaleString()}
+              </Typography>
+            )}
+          </CardContent>
+        </CardActionArea>
+        <CardActions sx={{ p: 0.5, justifyContent: 'space-between', mt: 'auto' }}>
+          {!file.isDirectory
+            ? <Checkbox size="small" checked={file.selected} onChange={() => onSelect(file.name)} />
+            : <Box />}
+          <Box>
+            <Tooltip title={t('download')}>
+              <IconButton size="small" onClick={() => onDownload(file.path)}>
+                <SaveAltIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title={t('delete')}>
+              <IconButton size="small" onClick={() => onDelete(file)}>
+                <DeleteForeverIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        </CardActions>
+      </Card>
+    ))}
+  </Box>
+)
 
 const IconMenu: React.FC<{
   posX: number
