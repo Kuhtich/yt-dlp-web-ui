@@ -12,14 +12,16 @@ import (
 )
 
 // Perform a search on the archive.txt file an determines if a download
-// has already be done.
-func DownloadExists(ctx context.Context, url string) (bool, error) {
+// has already be done. Extra arguments (a proxy, cookies, ...) are forwarded to
+// yt-dlp so that the metadata query can reach the site.
+func DownloadExists(ctx context.Context, url string, args ...string) (bool, error) {
+	argv := append([]string{"--print", "%(extractor)s %(id)s"}, args...)
+	argv = append(argv, url)
+
 	cmd := exec.CommandContext(
 		ctx,
 		config.Instance().DownloaderPath,
-		"--print",
-		"%(extractor)s %(id)s",
-		url,
+		argv...,
 	)
 	stdout, err := cmd.Output()
 	if err != nil {
