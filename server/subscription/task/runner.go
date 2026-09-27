@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/marcopiovanello/yt-dlp-web-ui/v4/server/archive"
@@ -35,9 +36,7 @@ type CronTaskRunner struct {
 	mq *queue.MessageQueue
 	db *kv.Store
 
-	tasks  chan monitorTask
-	errors chan error
-
+	tasks   chan monitorTask
 	running map[string]*monitorTask
 }
 
@@ -46,12 +45,17 @@ func NewCronTaskRunner(mq *queue.MessageQueue, db *kv.Store) TaskRunner {
 		mq:      mq,
 		db:      db,
 		tasks:   make(chan monitorTask),
-		errors:  make(chan error),
 		running: make(map[string]*monitorTask),
 	}
 }
 
 var argsSplitterRe = regexp.MustCompile(`(?mi)[^\s"']+|"([^"]*)"|'([^']*)'`)
+
+// subscription arguments are stored as one string, e.g.
+// "--proxy socks5://10.0.0.1:3000/ -t mkv": split them into yt-dlp arguments.
+func splitArgs(params string) []string {
+	return argsSplitterRe.FindAllString(params, -1)
+}
 
 func (t *CronTaskRunner) Submit(subcription *domain.Subscription) error {
 	schedule, err := cron.ParseStandard(subcription.CronExpr)
@@ -127,26 +131,51 @@ func (t *CronTaskRunner) fetcher(ctx context.Context, req *monitorTask) time.Dur
 
 	nextSchedule := time.Until(req.Schedule.Next(time.Now()))
 
-	cmd := exec.CommandContext(
-		ctx,
-		config.Instance().Paths.DownloaderPath,
-		"-I1",
-		"--flat-playlist",
-		"--print", "webpage_url",
-		req.Subscription.URL,
+	// The subscription arguments are used for the query as well: a proxy (or a
+	// cookies file) is needed to reach the channel page just as much as it is
+	// needed to download the video itself.
+	args := append(
+		[]string{"-I1", "--flat-playlist", "--print", "webpage_url"},
+		append(splitArgs(req.Subscription.Params), req.Subscription.URL)...,
 	)
+
+	cmd := exec.CommandContext(ctx, config.Instance().Paths.DownloaderPath, args...)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	stdout, err := cmd.Output()
 	if err != nil {
-		t.errors <- err
-		return time.Duration(0)
+		// Never drop the schedule: the loop has to keep polling, otherwise a
+		// single failure (no network, expired cookies, ...) stops the
+		// subscription forever.
+		slog.Error(
+			"failed to fetch the latest video for channel",
+			slog.String("channel", req.Subscription.URL),
+			slog.String("error", err.Error()),
+			slog.String("stderr", lastLine(stderr.String())),
+			slog.Any("retry_in", nextSchedule),
+		)
+		return nextSchedule
 	}
 
-	latestVideoURL := string(bytes.Trim(stdout, "\n"))
+	latestVideoURL := strings.TrimSpace(string(stdout))
+
+	if latestVideoURL == "" {
+		slog.Warn("no video found for channel", slog.String("channel", req.Subscription.URL))
+		return nextSchedule
+	}
 
 	// if the download exists there's not point in sending it into the message queue.
-	exists, err := archive.DownloadExists(ctx, latestVideoURL)
-	if exists && err == nil {
+	exists, err := archive.DownloadExists(ctx, latestVideoURL, splitArgs(req.Subscription.Params)...)
+	if err != nil {
+		slog.Warn(
+			"could not check the archive, queueing the download anyway",
+			slog.String("url", latestVideoURL),
+			slog.String("error", err.Error()),
+		)
+	}
+	if exists {
 		return nextSchedule
 	}
 
@@ -154,7 +183,7 @@ func (t *CronTaskRunner) fetcher(ctx context.Context, req *monitorTask) time.Dur
 	d := downloaders.NewGenericDownload(
 		latestVideoURL,
 		append(
-			argsSplitterRe.FindAllString(req.Subscription.Params, 1),
+			splitArgs(req.Subscription.Params),
 			[]string{
 				"--break-on-existing",
 				"--download-archive",
@@ -176,4 +205,13 @@ func (t *CronTaskRunner) fetcher(ctx context.Context, req *monitorTask) time.Dur
 
 func (t *CronTaskRunner) Recoverer() {
 	panic("unimplemented")
+}
+
+// lastLine returns the last non empty line of s.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(lines[len(lines)-1])
 }
